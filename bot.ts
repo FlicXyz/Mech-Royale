@@ -11,8 +11,14 @@ const wrap = (a: number) => {
 const d2 = (a: number[], b: number[]) => Math.hypot(a[0] - b[0], a[1] - b[1])
 const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v)
 
+const VAR: string = (globalThis as any).MR_VAR ?? ""
 const UPGRADE_PRI = [
   "plating", "armor", "nanites", "gun_damage", "laser_damage", "gun_rate", "laser_charge", "lightning_efficiency",
+  "gun_mag", "servos", "sensors", "gun_velocity", "capacitor", "reactor", "jets", "gyros", "lightning_range",
+  "lightning_chain", "mortar_reload", "mortar_velocity", "mortar_splash", "laser_pierce",
+]
+const UPGRADE_DMG = [
+  "laser_damage", "gun_damage", "laser_charge", "gun_rate", "plating", "armor", "lightning_efficiency", "nanites",
   "gun_mag", "servos", "sensors", "gun_velocity", "capacitor", "reactor", "jets", "gyros", "lightning_range",
   "lightning_chain", "mortar_reload", "mortar_velocity", "mortar_splash", "laser_pierce",
 ]
@@ -51,6 +57,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
   const attackers = new Map<number, number>()
   let hideSpot: [number, number] | null = null
   let hideT = -99
+  let healMode = false
   const crateMem = new Map<number, V3>()
   const pickMem = new Map<number, { id: number; kind: string; pos: number[] }>()
   let myKills = 0
@@ -214,7 +221,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
   function pickUpgrade(offer: any): number {
     let bi = 0, bp = 1e9
     offer.choices.forEach((c: any, i: number) => {
-      const p = UPGRADE_PRI.indexOf(c.id)
+      const p = (VAR === "dmgup" ? UPGRADE_DMG : UPGRADE_PRI).indexOf(c.id)
       const pp = p < 0 ? 100 : p
       if (pp < bp) { bp = pp; bi = i }
     })
@@ -333,7 +340,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
     const opponents = watchers.length
     // detect the practice setting: nobody dies unless we kill them
     if (obs.alive + myKills < 16 - 0.5 && t < 300) ffaSeen = true
-    squad = !((globalThis as any).MR_VAR === "earlyhide" && laserS < 0 && t < 100) // aggressive dueling won in both settings (11.2 vs 10.7 pts over ~210 live FFA games each)
+    squad = !(VAR === "earlyhide" && laserS < 0 && t < 100) // aggressive dueling won in both settings (11.2 vs 10.7 pts over ~210 live FFA games each)
     const fightable = squad
       ? engaged && !!target && tLos && opponents <= 2 && (hpFrac > 0.4 || target.hp < self.hp * 1.1 || tDist < 25)
       : engaged && !!target && tLos && opponents <= 1 && (hpFrac > 0.5 || target.hp < self.hp * 0.6 || tDist < 30) && target.hp < self.hp * 1.5
@@ -407,6 +414,8 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
       // unseen: drops, loot, cubes, hide
       const quiet = enemies.length === 0 && t - lastDamageT > 4
       let goal: [number, number] | null = null
+      const healing = VAR === "regen" && (hpFrac < 0.55 || (healMode && hpFrac < 0.92)) && !needZone
+      healMode = healing
       for (const dr of obs.drops ?? []) {
         if (dr.lands_in > 0.5 || dropFailed.has(dr.id)) continue
         const dd = d2(dr.pos, [x, y])
@@ -430,6 +439,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
         if (goal && bd < 30 && map.los(x, y, mz, goal[0], goal[1], map.groundAt(goal[0], goal[1]) + 1.2, 1)) goal = [x, y]
       }
       if (goal && !inZoneSoon(zone, goal[0], goal[1], 10)) goal = null
+      if (goal && healing && label !== "drop" && d2(goal, [x, y]) > 12) goal = null
       if (goal) {
         mode = "collect"
         planTo(x, y, goal[0], goal[1])
