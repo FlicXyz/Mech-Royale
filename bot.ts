@@ -412,7 +412,15 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
       mode = "fight"
       const dd = tDist
       const ux = (target.pos[0] - x) / (dd || 1), uy = (target.pos[1] - y) / (dd || 1)
-      if (t > strafeFlipT) { strafeDir = rng() < 0.5 ? -strafeDir : strafeDir; strafeFlipT = t + 0.45 + rng() * 0.9 }
+      if (t > strafeFlipT) {
+        strafeDir = rng() < 0.5 ? -strafeDir : strafeDir
+        if (VAR === "wall" && rng() < 0.7) {
+          // prefer the side that is more boxed in by buildings
+          const e1 = map.expoAt(x - uy * 7, y + ux * 7), e2 = map.expoAt(x + uy * 7, y - ux * 7)
+          strafeDir = e1 <= e2 ? 1 : -1
+        }
+        strafeFlipT = t + 0.45 + rng() * 0.9
+      }
       const hasLit = litS >= 0 && self.energy > 15
       const tw = target.weapons ?? []
       const enemyLit = tw.includes("lightning")
