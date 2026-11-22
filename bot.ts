@@ -51,6 +51,9 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
   const attackers = new Map<number, number>()
   let hideSpot: [number, number] | null = null
   let hideT = -99
+  let myKills = 0
+  let squad = false // practice: house bots team up and never fight each other
+  let ffaSeen = false
   const posHist: [number, number, number, number][] = []
   const stuckEvents: number[] = []
   let unstickJet = false
@@ -242,6 +245,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
           if (!obs.mechs.some((m: any) => m.id === e.by)) { alertYaw = e.bearing; alertT = t }
         }
       } else if (e.type === "hit") lastDealT = t
+      else if (e.type === "kill") myKills++
       else if (e.type === "take_failed") takeFail.set(e.id, t)
     }
     for (const s of obs.sounds) {
@@ -316,8 +320,13 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
     const tLos = target ? map.los(x, y, mz, target.pos[0], target.pos[1], mechCenterZ(target), 1.5) : false
     const weakTarget = !!target && tLos && tDist < 140 && target.hp < Math.min(380, self.hp * 0.5) && hpFrac > 0.35
     const opponents = watchers.length
-    const fightable = engaged && !!target && tLos && opponents <= 1 && (hpFrac > 0.5 || target.hp < self.hp * 0.6 || tDist < 30) && target.hp < self.hp * 1.5
-    const wantShoot = !!target && tLos && (engaged || weakTarget || tDist < 40)
+    // detect the practice setting: nobody dies unless we kill them
+    if (obs.alive + myKills < 16 - 0.5 && t < 300) ffaSeen = true
+    squad = (!ffaSeen && t > 40) || !!(globalThis as any).MR_FORCE_SQUAD
+    const fightable = squad
+      ? engaged && !!target && tLos && opponents <= 2 && (hpFrac > 0.3 || target.hp < self.hp * 1.2)
+      : engaged && !!target && tLos && opponents <= 1 && (hpFrac > 0.5 || target.hp < self.hp * 0.6 || tDist < 30) && target.hp < self.hp * 1.5
+    const wantShoot = !!target && tLos && (engaged || weakTarget || tDist < 40 || (squad && tDist < 160 && hpFrac > 0.5 && opponents <= 1))
 
     // ---- movement mode ----
     let move: [number, number] = [0, 0]
@@ -349,7 +358,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
       move = followPath(x, y) ?? [gx - x, gy - y]
       boost = (outside && self.energy > 30) || (timeToShrink < 10 && self.energy > 40) || self.energy > 75 || (engaged && self.energy > 30)
       if (!outside && !engaged && timeToShrink > 30 && enemies.length === 0) { move = sneak(move, 0.95); boost = false }
-    } else if ((engaged && !fightable && !weakTarget) || (!engaged && watchers.length > 0 && !weakTarget)) {
+    } else if ((engaged && !fightable && !weakTarget) || (!engaged && watchers.length > 0 && !weakTarget && !(squad && wantShoot))) {
       // break line of sight
       mode = engaged ? "evade" : "slip"
       const threats = watchers.length ? watchers : near
@@ -362,7 +371,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
       const closest = Math.min(...threats.map((e) => d2(e.pos, [x, y])))
       if (engaged || closest < 70) boost = self.energy > 12
       else move = sneak(move, 0.42)
-    } else if (target && (fightable || weakTarget)) {
+    } else if (target && (fightable || weakTarget || (squad && wantShoot))) {
       mode = "fight"
       const dd = tDist
       const ux = (target.pos[0] - x) / (dd || 1), uy = (target.pos[1] - y) / (dd || 1)
@@ -577,7 +586,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
     if (jump) act.jump = true
     if (aim) act.aim = [Math.round(aim[0] * 10000) / 10000, Math.round(clamp(aim[1], cfg.mech.min_pitch, cfg.mech.max_pitch) * 10000) / 10000]
     act.fire = fire
-    act._dbg = `${mode} ${label} hp${Math.round(self.hp)} e${Math.round(self.energy)} n${near.length}`
+    act._dbg = `${mode}${squad ? '*' : ''} ${label} hp${Math.round(self.hp)} e${Math.round(self.energy)} n${near.length}`
     return act
   }
 
