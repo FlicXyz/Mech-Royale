@@ -1,0 +1,322 @@
+// Static map model: floor heights, obstacles, clearance, line of sight and A* on a coarse grid.
+
+export type World = any
+
+const STEP_UP = 1.2
+const MECH_H = 9
+
+export class GameMap {
+  nx: number
+  ny: number
+  minX: number
+  minY: number
+  ground: Float32Array // terrain height at 1 m vertices
+  floor: Float32Array // walkable floor height (ground or low deck)
+  solidLo: Float32Array // union interval of solids covering the cell (for LOS)
+  solidHi: Float32Array
+  blocked: Uint8Array // 1 = obstacle for ground navigation
+  clear: Float32Array // distance (m) to nearest obstacle
+  // coarse nav grid
+  cs = 2
+  cnx: number
+  cny: number
+  cwalk: Uint8Array
+  ccost: Float32Array
+
+  constructor(world: World, terrain: Int16Array) {
+    const t = world.terrain
+    this.nx = t.nx
+    this.ny = t.ny
+    this.minX = t.minX
+    this.minY = t.minY
+    const N = this.nx * this.ny
+    this.ground = new Float32Array(N)
+    for (let i = 0; i < N; i++) this.ground[i] = terrain[i] * (t.scale ?? 0.01)
+    this.floor = Float32Array.from(this.ground)
+    this.solidLo = new Float32Array(N).fill(1e9)
+    this.solidHi = new Float32Array(N).fill(-1e9)
+    this.blocked = new Uint8Array(N)
+    for (const p of world.prisms) this.rasterPrism(p)
+    // steep terrain / ledges become obstacles
+    const nx = this.nx, ny = this.ny
+    for (let j = 1; j < ny - 1; j++)
+      for (let i = 1; i < nx - 1; i++) {
+        const k = j * nx + i
+        if (this.blocked[k]) continue
+        const f = this.floor[k]
+        if (Math.abs(f - this.floor[k + 1]) > STEP_UP || Math.abs(f - this.floor[k - 1]) > STEP_UP || Math.abs(f - this.floor[k + nx]) > STEP_UP || Math.abs(f - this.floor[k - nx]) > STEP_UP) this.blocked[k] = 2
+      }
+    // map edges (arena bounds) are walls
+    const b = world.bounds
+    for (let j = 0; j < ny; j++)
+      for (let i = 0; i < nx; i++) {
+        const x = this.minX + i, y = this.minY + j
+        if (x < b.minX + 1 || x > b.maxX - 1 || y < b.minY + 1 || y > b.maxY - 1) this.blocked[j * nx + i] = 1
+      }
+    this.clear = this.distanceTransform()
+    this.cnx = Math.floor(nx / this.cs)
+    this.cny = Math.floor(ny / this.cs)
+    this.cwalk = new Uint8Array(this.cnx * this.cny)
+    this.ccost = new Float32Array(this.cnx * this.cny)
+    for (let j = 0; j < this.cny; j++)
+      for (let i = 0; i < this.cnx; i++) {
+        const c = this.clear[(j * this.cs) * nx + i * this.cs]
+        const k = j * this.cnx + i
+        this.cwalk[k] = c >= 3.0 ? 1 : 0
+        this.ccost[k] = c >= 6 ? 1 : 1 + (6 - c) * 0.5
+      }
+  }
+
+  private rasterPrism(p: any) {
+    const r: number[] = p.ring
+    let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9
+    for (let i = 0; i < r.length; i += 2) {
+      x0 = Math.min(x0, r[i]); x1 = Math.max(x1, r[i])
+      y0 = Math.min(y0, r[i + 1]); y1 = Math.max(y1, r[i + 1])
+    }
+    const holes: number[][] = p.holes ?? []
+    const i0 = Math.max(0, Math.floor(x0 - this.minX)), i1 = Math.min(this.nx - 1, Math.ceil(x1 - this.minX))
+    const j0 = Math.max(0, Math.floor(y0 - this.minY)), j1 = Math.min(this.ny - 1, Math.ceil(y1 - this.minY))
+    for (let j = j0; j <= j1; j++) {
+      const y = this.minY + j
+      for (let i = i0; i <= i1; i++) {
+        const x = this.minX + i
+        if (!pip(r, x, y)) continue
+        let inHole = false
+        for (const h of holes) if (h.length >= 6 && pip(h, x, y)) { inHole = true; break }
+        if (inHole) continue
+        const k = j * this.nx + i
+        if (p.base < this.solidLo[k]) this.solidLo[k] = p.base
+        if (p.top > this.solidHi[k]) this.solidHi[k] = p.top
+        const g = this.ground[k]
+        if (p.base <= g + 0.5) {
+          // solid from the ground up
+          if (p.top - g <= STEP_UP) this.floor[k] = Math.max(this.floor[k], p.top)
+          else this.blocked[k] = 1
+        } else if (p.base - g >= MECH_H + 0.2) {
+          // overhead: walk under
+        } else if (p.top - g <= STEP_UP + 4 && p.kind === "bridge") {
+          this.floor[k] = Math.max(this.floor[k], p.top)
+        } else this.blocked[k] = 1
+      }
+    }
+  }
+
+  private distanceTransform(): Float32Array {
+    // two-pass chamfer distance
+    const nx = this.nx, ny = this.ny, N = nx * ny
+    const d = new Float32Array(N)
+    for (let k = 0; k < N; k++) d[k] = this.blocked[k] ? 0 : 1e6
+    const a = 1, b = Math.SQRT2
+    for (let j = 0; j < ny; j++)
+      for (let i = 0; i < nx; i++) {
+        const k = j * nx + i
+        let v = d[k]
+        if (v === 0) continue
+        if (i > 0) v = Math.min(v, d[k - 1] + a)
+        if (j > 0) {
+          v = Math.min(v, d[k - nx] + a)
+          if (i > 0) v = Math.min(v, d[k - nx - 1] + b)
+          if (i < nx - 1) v = Math.min(v, d[k - nx + 1] + b)
+        }
+        d[k] = v
+      }
+    for (let j = ny - 1; j >= 0; j--)
+      for (let i = nx - 1; i >= 0; i--) {
+        const k = j * nx + i
+        let v = d[k]
+        if (v === 0) continue
+        if (i < nx - 1) v = Math.min(v, d[k + 1] + a)
+        if (j < ny - 1) {
+          v = Math.min(v, d[k + nx] + a)
+          if (i < nx - 1) v = Math.min(v, d[k + nx + 1] + b)
+          if (i > 0) v = Math.min(v, d[k + nx - 1] + b)
+        }
+        d[k] = v
+      }
+    return d
+  }
+
+  idx(x: number, y: number): number {
+    let i = Math.round(x - this.minX), j = Math.round(y - this.minY)
+    if (i < 0) i = 0; else if (i >= this.nx) i = this.nx - 1
+    if (j < 0) j = 0; else if (j >= this.ny) j = this.ny - 1
+    return j * this.nx + i
+  }
+  groundAt(x: number, y: number): number {
+    const fx = x - this.minX, fy = y - this.minY
+    let i = Math.floor(fx), j = Math.floor(fy)
+    if (i < 0) i = 0; if (j < 0) j = 0
+    if (i >= this.nx - 1) i = this.nx - 2; if (j >= this.ny - 1) j = this.ny - 2
+    const u = Math.min(1, Math.max(0, fx - i)), v = Math.min(1, Math.max(0, fy - j))
+    const k = j * this.nx + i, g = this.ground
+    return (g[k] * (1 - u) + g[k + 1] * u) * (1 - v) + (g[k + this.nx] * (1 - u) + g[k + this.nx + 1] * u) * v
+  }
+  floorAt(x: number, y: number) { return this.floor[this.idx(x, y)] }
+  clearAt(x: number, y: number) { return this.clear[this.idx(x, y)] }
+  isBlocked(x: number, y: number) { return this.blocked[this.idx(x, y)] !== 0 }
+  roofTop(x: number, y: number) { return this.solidHi[this.idx(x, y)] }
+
+  /** True if the straight 3D segment a->b is not blocked by solids or terrain. */
+  los(ax: number, ay: number, az: number, bx: number, by: number, bz: number, endSkip = 1.0): boolean {
+    const dx = bx - ax, dy = by - ay, dz = bz - az
+    const L = Math.hypot(dx, dy)
+    const n = Math.max(1, Math.ceil(L / 0.8))
+    const skip = L > 0 ? endSkip / L : 0
+    for (let s = 1; s < n; s++) {
+      const f = s / n
+      if (f < skip || f > 1 - skip) continue
+      const x = ax + dx * f, y = ay + dy * f, z = az + dz * f
+      const k = this.idx(x, y)
+      if (z < this.ground[k] - 0.3) return false
+      if (z >= this.solidLo[k] && z <= this.solidHi[k]) return false
+    }
+    return true
+  }
+
+  /** Straight walk from a to b stays in cells with clearance >= c. */
+  walkLine(ax: number, ay: number, bx: number, by: number, c = 2.8): boolean {
+    const L = Math.hypot(bx - ax, by - ay)
+    const n = Math.max(1, Math.ceil(L / 0.7))
+    for (let s = 0; s <= n; s++) {
+      const f = s / n
+      if (this.clear[this.idx(ax + (bx - ax) * f, ay + (by - ay) * f)] < c) return false
+    }
+    return true
+  }
+
+  // ---------- coarse A* ----------
+  private heap = new Int32Array(1 << 18)
+  private hkeys = new Float32Array(1 << 18)
+  private gScore = new Float32Array(0)
+  private came = new Int32Array(0)
+  private stamp = new Int32Array(0)
+  private curStamp = 0
+
+  toCell(x: number, y: number): number {
+    let i = Math.round((x - this.minX) / this.cs), j = Math.round((y - this.minY) / this.cs)
+    i = Math.max(0, Math.min(this.cnx - 1, i)); j = Math.max(0, Math.min(this.cny - 1, j))
+    return j * this.cnx + i
+  }
+  cellXY(c: number): [number, number] {
+    const i = c % this.cnx, j = (c / this.cnx) | 0
+    return [this.minX + i * this.cs, this.minY + j * this.cs]
+  }
+  nearestWalkable(c: number, maxR = 12): number {
+    if (this.cwalk[c]) return c
+    const ci = c % this.cnx, cj = (c / this.cnx) | 0
+    for (let r = 1; r <= maxR; r++) {
+      let best = -1, bd = 1e9
+      for (let dj = -r; dj <= r; dj++)
+        for (let di = -r; di <= r; di++) {
+          if (Math.max(Math.abs(di), Math.abs(dj)) !== r) continue
+          const i = ci + di, j = cj + dj
+          if (i < 0 || j < 0 || i >= this.cnx || j >= this.cny) continue
+          const k = j * this.cnx + i
+          if (this.cwalk[k]) { const d = di * di + dj * dj; if (d < bd) { bd = d; best = k } }
+        }
+      if (best >= 0) return best
+    }
+    return -1
+  }
+
+  /** A* from (sx,sy) to (gx,gy). Returns world waypoints (smoothed) or null. extraCost(cellIndex) adds penalty. */
+  path(sx: number, sy: number, gx: number, gy: number, maxExpand = 60000, extraCost?: (x: number, y: number) => number): [number, number][] | null {
+    const N = this.cnx * this.cny
+    if (this.gScore.length !== N) {
+      this.gScore = new Float32Array(N); this.came = new Int32Array(N); this.stamp = new Int32Array(N)
+    }
+    const s = this.nearestWalkable(this.toCell(sx, sy))
+    const g = this.nearestWalkable(this.toCell(gx, gy))
+    if (s < 0 || g < 0) return null
+    this.curStamp++
+    const st = this.curStamp
+    const cnx = this.cnx
+    const gi = g % cnx, gj = (g / cnx) | 0
+    let hn = 0
+    const heap = this.heap, hk = this.hkeys
+    const push = (node: number, key: number) => {
+      let i = hn++
+      while (i > 0) {
+        const p = (i - 1) >> 1
+        if (hk[p] <= key) break
+        heap[i] = heap[p]; hk[i] = hk[p]; i = p
+      }
+      heap[i] = node; hk[i] = key
+    }
+    const pop = (): number => {
+      const top = heap[0]
+      hn--
+      const node = heap[hn], key = hk[hn]
+      let i = 0
+      while (true) {
+        let c = 2 * i + 1
+        if (c >= hn) break
+        if (c + 1 < hn && hk[c + 1] < hk[c]) c++
+        if (hk[c] >= key) break
+        heap[i] = heap[c]; hk[i] = hk[c]; i = c
+      }
+      heap[i] = node; hk[i] = key
+      return top
+    }
+    const H = (k: number) => {
+      const di = Math.abs(k % cnx - gi), dj = Math.abs(((k / cnx) | 0) - gj)
+      return (Math.max(di, dj) + 0.4142 * Math.min(di, dj)) * 1.0
+    }
+    this.stamp[s] = st; this.gScore[s] = 0; this.came[s] = -1
+    push(s, H(s))
+    let expanded = 0, found = false
+    const DI = [1, -1, 0, 0, 1, 1, -1, -1], DJ = [0, 0, 1, -1, 1, -1, 1, -1]
+    let bestNode = s, bestH = H(s)
+    while (hn > 0 && hn < heap.length - 16) {
+      const cur = pop()
+      if (cur === g) { found = true; break }
+      if (++expanded > maxExpand) break
+      const ci = cur % cnx, cj = (cur / cnx) | 0
+      const gc = this.gScore[cur]
+      const hc = H(cur)
+      if (hc < bestH) { bestH = hc; bestNode = cur }
+      for (let d = 0; d < 8; d++) {
+        const ni = ci + DI[d], nj = cj + DJ[d]
+        if (ni < 0 || nj < 0 || ni >= cnx || nj >= this.cny) continue
+        const nk = nj * cnx + ni
+        if (!this.cwalk[nk]) continue
+        if (d >= 4 && (!this.cwalk[cj * cnx + ni] || !this.cwalk[nj * cnx + ci])) continue
+        let step = (d >= 4 ? 1.4142 : 1) * (this.ccost[nk] + this.ccost[cur]) * 0.5
+        if (extraCost) step += extraCost(this.minX + ni * this.cs, this.minY + nj * this.cs)
+        const ng = gc + step
+        if (this.stamp[nk] === st && ng >= this.gScore[nk]) continue
+        this.stamp[nk] = st; this.gScore[nk] = ng; this.came[nk] = cur
+        push(nk, ng + H(nk))
+      }
+    }
+    const end = found ? g : bestNode
+    const cells: number[] = []
+    for (let c = end; c >= 0 && cells.length < 5000; c = this.came[c]) { cells.push(c); if (c === s) break }
+    cells.reverse()
+    const pts = cells.map((c) => this.cellXY(c))
+    if (found) pts.push([gx, gy])
+    // string pulling
+    const out: [number, number][] = []
+    let ax = sx, ay = sy
+    let i = 0
+    while (i < pts.length) {
+      let j = Math.min(pts.length - 1, i + 40)
+      while (j > i && !this.walkLine(ax, ay, pts[j][0], pts[j][1])) j--
+      out.push(pts[j])
+      ax = pts[j][0]; ay = pts[j][1]
+      i = j + 1
+    }
+    return out
+  }
+}
+
+function pip(r: number[], x: number, y: number): boolean {
+  let inside = false
+  const n = r.length / 2
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const xi = r[2 * i], yi = r[2 * i + 1], xj = r[2 * j], yj = r[2 * j + 1]
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside
+  }
+  return inside
+}
