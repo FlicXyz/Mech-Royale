@@ -52,6 +52,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
   let hideSpot: [number, number] | null = null
   let hideT = -99
   const crateMem = new Map<number, V3>()
+  const pickMem = new Map<number, { id: number; kind: string; pos: number[] }>()
   let myKills = 0
   let squad = false // practice: house bots team up and never fight each other
   let ffaSeen = false
@@ -239,6 +240,10 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
     }
     for (const [id, tr] of tracks) if (t - tr.seen > 20) tracks.delete(id)
     for (const c of obs.crates) crateMem.set(c.id, [c.pos[0], c.pos[1], c.pos[2]])
+    for (const p of obs.pickups) pickMem.set(p.id, { id: p.id, kind: p.kind, pos: p.pos })
+    for (const [id, pm] of pickMem) {
+      if (d2(pm.pos, [x, y]) < 30 && !obs.pickups.some((p: any) => p.id === id) && map.see(x, y, z + 8, pm.pos[0], pm.pos[1], pm.pos[2] + 0.5)) pickMem.delete(id)
+    }
     for (const [id, cp] of crateMem) {
       // forget crates we should see but don't (destroyed)
       if (d2(cp, [x, y]) < 40 && !obs.crates.some((c: any) => c.id === id) && map.see(x, y, z + 8, cp[0], cp[1], cp[2] + 1.5)) crateMem.delete(id)
@@ -273,7 +278,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
     // pickups: take if within reach and better
     let lootGoal: [number, number] | null = null
     let lootScore = 0
-    for (const p of obs.pickups) {
+    for (const p of pickMem.values()) {
       const pr = WEAPON_PRI[p.kind] ?? 0
       if (pr <= extraPri || slotOf(p.kind) >= 0) continue
       if (takeFail.has(p.id) && t - (takeFail.get(p.id) ?? 0) < 3) continue
@@ -285,7 +290,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
         }
       }
       const sc = pr * 30 - dd
-      if (dd < 90 && Math.abs(p.pos[2] - z) < 4 && sc > lootScore - 1e-9 && map.clearAt(p.pos[0], p.pos[1]) >= 2.5) { lootScore = sc; lootGoal = [p.pos[0], p.pos[1]] }
+      if (dd < (squad ? 170 : 110) && Math.abs(p.pos[2] - z) < 4 && sc > lootScore - 1e-9 && map.clearAt(p.pos[0], p.pos[1]) >= 2.5) { lootScore = sc; lootGoal = [p.pos[0], p.pos[1]] }
     }
 
     // ---- threats ----
@@ -330,7 +335,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
     if (obs.alive + myKills < 16 - 0.5 && t < 300) ffaSeen = true
     squad = !ffaSeen || !!(globalThis as any).MR_FORCE_SQUAD
     const fightable = squad
-      ? engaged && !!target && tLos && opponents <= 2 && (hpFrac > 0.3 || target.hp < self.hp * 1.2)
+      ? engaged && !!target && tLos && opponents <= 2 && (hpFrac > 0.4 || target.hp < self.hp * 1.1 || tDist < 25)
       : engaged && !!target && tLos && opponents <= 1 && (hpFrac > 0.5 || target.hp < self.hp * 0.6 || tDist < 30) && target.hp < self.hp * 1.5
     const wantShoot = !!target && tLos && (engaged || weakTarget || tDist < 40 || (squad && tDist < 160 && hpFrac > 0.5 && opponents <= 1))
 
@@ -405,7 +410,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
       for (const dr of obs.drops ?? []) {
         if (dr.lands_in > 0.5 || dropFailed.has(dr.id)) continue
         const dd = d2(dr.pos, [x, y])
-        if (dd < 120 && quiet && inZoneSoon(zone, dr.pos[0], dr.pos[1], 15) && (dr.holder === null || dr.holder === me_id)) { goal = [dr.pos[0], dr.pos[1]]; label = "drop" }
+        if (dd < (squad ? 220 : 120) && (quiet || (squad && !engaged)) && inZoneSoon(zone, dr.pos[0], dr.pos[1], 15) && (dr.holder === null || dr.holder === me_id)) { goal = [dr.pos[0], dr.pos[1]]; label = "drop" }
       }
       if (!goal) {
         let bd = engaged ? 25 : squad ? 90 : enemies.length ? 35 : 70
