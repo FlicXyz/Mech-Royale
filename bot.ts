@@ -70,7 +70,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
   function planTo(x: number, y: number, gx: number, gy: number, force = false) {
     const goalMoved = !pathGoal || d2(pathGoal, [gx, gy]) > 6
     if (!force && !goalMoved && t - pathT < 2.0 && path.length) return
-    const p = map.path(x, y, gx, gy, 50000)
+    const p = map.path(x, y, gx, gy, 14000)
     path = p ?? []
     pathGoal = [gx, gy]
     pathT = t
