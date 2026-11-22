@@ -402,7 +402,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
         if (dd < 120 && quiet && inZoneSoon(zone, dr.pos[0], dr.pos[1], 15) && (dr.holder === null || dr.holder === me_id)) { goal = [dr.pos[0], dr.pos[1]]; label = "drop" }
       }
       if (!goal) {
-        let bd = enemies.length ? 25 : 70
+        let bd = engaged ? 25 : squad ? 90 : enemies.length ? 35 : 70
         for (const c of obs.cubes) {
           const dd = d2(c.pos, [x, y])
           if (dd < bd && Math.abs(c.pos[2] - z) < 4 && map.clearAt(c.pos[0], c.pos[1]) >= 2.4) { bd = dd; goal = [c.pos[0], c.pos[1]]; label = "cube" }
@@ -416,7 +416,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
         move = followPath(x, y) ?? [goal[0] - x, goal[1] - y]
         if (d2(goal, [x, y]) < 1.5) move = [0, 0]
         boost = quiet && self.energy > 60 && d2(goal, [x, y]) > 20
-        if (!quiet) move = sneak(move, 0.42)
+        if (!quiet && !squad) move = sneak(move, 0.42)
       } else {
         // pick / keep a hiding spot inside the safe area
         const hs = hideSpot
