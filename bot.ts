@@ -342,7 +342,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
     if (obs.alive + myKills < 16 - 0.5 && t < 300) ffaSeen = true
     squad = !(VAR === "earlyhide" && laserS < 0 && t < 100) // aggressive dueling won in both settings (11.2 vs 10.7 pts over ~210 live FFA games each)
     const fightable = squad
-      ? engaged && !!target && tLos && opponents <= 1 && (hpFrac > (VAR === "solo2" ? 0.55 : 0.4) || target.hp < self.hp * 1.1 || tDist < 25)
+      ? engaged && !!target && tLos && opponents <= 1 && (hpFrac > (VAR === "bold" ? 0.25 : 0.4) || target.hp < self.hp * 1.1 || tDist < 25)
       : engaged && !!target && tLos && opponents <= 1 && (hpFrac > 0.5 || target.hp < self.hp * 0.6 || tDist < 30) && target.hp < self.hp * 1.5
     const wantShoot = !!target && tLos && (engaged || weakTarget || tDist < 40 || (squad && tDist < 160 && hpFrac > 0.5 && opponents <= 1))
 
@@ -408,7 +408,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
       move = [-uy * strafeDir + ux * radial, ux * strafeDir + uy * radial]
       if (!inZoneSoon(zone, x + move[0] * 6, y + move[1] * 6, 3)) { strafeDir = -strafeDir; move = [-uy * strafeDir + ux * radial, ux * strafeDir + uy * radial] }
       if (map.clearAt(x + move[0] * 4, y + move[1] * 4) < 2.7) { strafeDir = -strafeDir; strafeFlipT = t + 0.6; move = [-uy * strafeDir + ux * radial, ux * strafeDir + uy * radial] }
-      boost = (self.energy > 45 || (kite && self.energy > 8)) && !(laserS >= 0 && (W[laserS].charge ?? 0) > 0)
+      boost = (self.energy > (VAR === "jink" ? 15 : 45) || (kite && self.energy > 8)) && !(laserS >= 0 && (W[laserS].charge ?? 0) > 0)
       if (hasLit && prefMax < 40 && self.energy < 50 && dd < 40) boost = false
     } else {
       // unseen: drops, loot, cubes, hide
