@@ -37,7 +37,6 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
   // motion state
   let strafeDir = 1
   let strafeFlipT = 0
-  let stuckN = 0
   let unstickUntil = -1
   let unstickDir: [number, number] = [1, 0]
   let lastPos: V3 = [0, 0, 0]
@@ -52,6 +51,9 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
   const attackers = new Map<number, number>()
   let hideSpot: [number, number] | null = null
   let hideT = -99
+  const posHist: [number, number, number, number][] = []
+  const stuckEvents: number[] = []
+  let unstickJet = false
   let npcAtkT = -99
 
   const zoneAt = (z: any, tt: number): { c: [number, number]; r: number } => {
@@ -193,7 +195,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
       const cx = x + Math.cos(a) * r, cy = y + Math.sin(a) * r
       if (d2([cx, cy], nc) > safeR * 0.85) continue
       if (map.clearAt(cx, cy) < 3.2) continue
-      const s = map.expoAt(cx, cy) * 100 + r * 0.25 + (d2([cx, cy], nc) / Math.max(safeR, 1)) * 15
+      const s = map.expoAt(cx, cy) * 100 + (map.costAt(cx, cy) - 1) * 15 + r * 0.25 + (d2([cx, cy], nc) / Math.max(safeR, 1)) * 15
       if (s < bs) { bs = s; best = [cx, cy] }
     }
     if (!best) {
@@ -243,7 +245,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
       else if (e.type === "take_failed") takeFail.set(e.id, t)
     }
     for (const s of obs.sounds) {
-      if (["gun", "laser", "laser_charge", "lightning", "mortar"].includes(s.kind) && s.dist !== "far" && t - alertT > 2) {
+      if ((["gun", "laser", "laser_charge", "lightning", "mortar"].includes(s.kind) && s.dist !== "far" || (["step", "boost", "jet", "reload"].includes(s.kind))) && t - alertT > 2) {
         if (!obs.mechs.some((m: any) => m.kind === "mech")) { alertYaw = s.bearing; alertT = t - 1 }
       }
     }
@@ -314,7 +316,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
     const tLos = target ? map.los(x, y, mz, target.pos[0], target.pos[1], mechCenterZ(target), 1.5) : false
     const weakTarget = !!target && tLos && tDist < 140 && target.hp < Math.min(380, self.hp * 0.5) && hpFrac > 0.35
     const opponents = watchers.length
-    const fightable = engaged && !!target && tLos && opponents <= 1 && hpFrac > 0.4 && target.hp < self.hp * 1.4
+    const fightable = engaged && !!target && tLos && opponents <= 1 && (hpFrac > 0.5 || target.hp < self.hp * 0.6 || tDist < 30) && target.hp < self.hp * 1.5
     const wantShoot = !!target && tLos && (engaged || weakTarget || tDist < 40)
 
     // ---- movement mode ----
@@ -345,7 +347,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
       const gy = nc[1] + (y - nc[1]) * (safeR * 0.6 / Math.max(distNext, 1e-3))
       planTo(x, y, gx, gy)
       move = followPath(x, y) ?? [gx - x, gy - y]
-      boost = outside || timeToShrink < 10 || self.energy > 70 || engaged
+      boost = (outside && self.energy > 30) || (timeToShrink < 10 && self.energy > 40) || self.energy > 75 || (engaged && self.energy > 30)
       if (!outside && !engaged && timeToShrink > 30 && enemies.length === 0) { move = sneak(move, 0.95); boost = false }
     } else if ((engaged && !fightable && !weakTarget) || (!engaged && watchers.length > 0 && !weakTarget)) {
       // break line of sight
@@ -448,22 +450,33 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
     if (dodge && mode !== "zone") { move = dodge; boost = self.energy > 10 }
 
     // ---- stuck handling ----
-    const sp = Math.hypot(self.vel[0], self.vel[1])
     const wantL = Math.hypot(move[0], move[1])
+    posHist.push([t, x, y, wantL > 0.35 ? 1 : 0])
+    while (posHist.length && t - posHist[0][0] > 1.6) posHist.shift()
+    const old = posHist[0]
+    const allWant = posHist.every((p) => p[3] === 1)
     if (t < unstickUntil) {
       move = unstickDir
-      jump = self.grounded
-      boost = true
-    } else if (wantL > 0.5 && sp < 1.2 && self.grounded) {
-      if (++stuckN > 6) {
-        stuckN = 0
-        const a = Math.atan2(move[1], move[0]) + (rng() < 0.5 ? 1 : -1) * (0.9 + rng() * 0.9)
+      if (unstickJet) { jump = self.grounded; boost = self.energy > 3 } else boost = false
+    } else if (allWant && t - old[0] > 1.4 && Math.hypot(x - old[1], y - old[2]) < 2.5) {
+      stuckEvents.push(t)
+      while (stuckEvents.length && t - stuckEvents[0] > 12) stuckEvents.shift()
+      posHist.length = 0
+      const ma = Math.atan2(move[1], move[0])
+      if (self.energy > 35 && stuckEvents.length % 2 === 1) {
+        // climb: jump and jet straight toward where we want to go
+        unstickJet = true
+        unstickDir = [Math.cos(ma), Math.sin(ma)]
+        unstickUntil = t + 1.3
+      } else {
+        unstickJet = self.energy > 15
+        const a = ma + (rng() < 0.5 ? 1 : -1) * (1.2 + rng() * 1.2)
         unstickDir = [Math.cos(a), Math.sin(a)]
-        unstickUntil = t + 0.7
-        path = []
-        pathT = -99
+        unstickUntil = t + 0.9
       }
-    } else stuckN = Math.max(0, stuckN - 1)
+      path = []
+      pathT = -99
+    }
 
     if (t >= unstickUntil && !dodge) move = steerClear(x, y, move)
     const ml = Math.hypot(move[0], move[1])

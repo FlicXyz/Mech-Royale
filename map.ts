@@ -94,6 +94,19 @@ export class GameMap {
         const k = j * this.cnx + i
         this.cwalk[k] = c >= 3.0 ? 1 : 0
         this.ccost[k] = c >= 6 ? 1 : 1 + (6 - c) * 0.5
+        if (this.cwalk[k]) {
+          // discourage high ground (stadium stands, raised plazas) whose exits are cliffs
+          const f0 = this.floor[(j * this.cs) * nx + i * this.cs]
+          let mn = f0
+          for (let dj = -12; dj <= 12; dj += 4)
+            for (let di = -12; di <= 12; di += 4) {
+              const ii = i * this.cs + di, jj = j * this.cs + dj
+              if (ii < 0 || jj < 0 || ii >= nx || jj >= ny) continue
+              const f = this.floor[jj * nx + ii]
+              if (f < mn) mn = f
+            }
+          if (f0 - mn > 6) this.ccost[k] += 3
+        }
       }
     this.buildExposure()
   }
@@ -143,6 +156,7 @@ export class GameMap {
         this.expo[j * this.enx + i] = tot / DIRS
       }
   }
+  costAt(x: number, y: number): number { return this.ccost[this.toCell(x, y)] }
   expoAt(x: number, y: number): number {
     const i = Math.round((x - this.minX) / this.es), j = Math.round((y - this.minY) / this.es)
     if (i < 0 || j < 0 || i >= this.enx || j >= this.eny) return 1

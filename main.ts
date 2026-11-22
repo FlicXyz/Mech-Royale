@@ -29,6 +29,11 @@ function onHello(msg: any) {
     const terrain = new Int16Array(tb.buffer.slice(tb.byteOffset, tb.byteOffset + tb.length))
     const map = new GameMap(world, terrain)
     bot = makeBot(msg, map, seeded(msg.seed ?? 1))
+    // warm up the JIT so the first observations are fast
+    for (let i = 0; i < 6; i++) {
+      map.path(-200 + i * 60, -100, 200 - i * 30, 150, 50000)
+      for (let k = 0; k < 200; k++) map.see(-100 + k, 0, 5, 100, 50 + i, 5)
+    }
   } catch (e) {
     log("init failed", e)
   }
