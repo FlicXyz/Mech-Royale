@@ -11,7 +11,7 @@ const wrap = (a: number) => {
 const d2 = (a: number[], b: number[]) => Math.hypot(a[0] - b[0], a[1] - b[1])
 const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v)
 
-const VAR: string = (globalThis as any).MR_VAR ?? ""
+const VAR: string = "noprovoke+steady"
 const V = new Set(VAR.split("+"))
 const UPGRADE_PRI = [
   "plating", "armor", "nanites", "gun_damage", "laser_damage", "gun_rate", "laser_charge", "lightning_efficiency",
