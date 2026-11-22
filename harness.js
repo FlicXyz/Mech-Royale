@@ -28,7 +28,7 @@
       try { a = H.bot.act(o) } catch (err) { H.err = String(err && err.stack || err); a = {} }
       const c = H.cur
       if (c) {
-        c.maxMs = Math.max(c.maxMs, performance.now() - t0); if (a.fire && a.fire[0]) c.gunShots = (c.gunShots || 0) + 1; for (const ev of o.events) if (ev.type === 'hit' && ev.weapon === 'gun') c.gunHits = (c.gunHits || 0) + 1
+        c.maxMs = Math.max(c.maxMs, performance.now() - t0); c.fireT = c.fireT || {}; c.hitW = c.hitW || {}; (a.fire || []).forEach((f, i) => { const w = o.self.weapons[i]; if (f && w) c.fireT[w.kind] = (c.fireT[w.kind] || 0) + 1 }); for (const ev of o.events) if (ev.type === 'hit') { const k = ev.weapon + (ev.target < 100 ? ':m' : ev.target < 1000 ? ':n' : ':c'); c.hitW[k] = (c.hitW[k] || 0) + 1 }; if (a.fire && a.fire[0]) c.gunShots = (c.gunShots || 0) + 1; for (const ev of o.events) if (ev.type === 'hit' && ev.weapon === 'gun') c.gunHits = (c.gunHits || 0) + 1
         const md = (a._dbg || '').split(' ')[0]; c.modes[md] = (c.modes[md] || 0) + 1
         for (const ev of o.events) {
           if (ev.type === 'damaged') { c.dmg += ev.amount; const k = ev.weapon + ':' + ev.by; c.dmgBy[k] = (c.dmgBy[k] || 0) + ev.amount }
