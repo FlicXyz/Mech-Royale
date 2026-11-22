@@ -423,7 +423,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
           const e1 = map.expoAt(x - uy * 7, y + ux * 7), e2 = map.expoAt(x + uy * 7, y - ux * 7)
           strafeDir = e1 <= e2 ? 1 : -1
         }
-        strafeFlipT = V.has("jitter") ? t + 0.2 + rng() * 0.45 : V.has("calm") ? t + 1.6 + rng() * 1.6 : V.has("steady2") ? t + 0.7 + rng() * 1.0 : V.has("steady") ? t + 0.9 + rng() * 1.2 : t + 0.45 + rng() * 0.9
+        strafeFlipT = V.has("jitter") ? t + 0.2 + rng() * 0.45 : V.has("calm") ? t + 1.6 + rng() * 1.6 : V.has("steady2") ? t + 0.7 + rng() * 1.0 : V.has("steady3") ? t + 1.0 + rng() * 1.0 : V.has("steady") ? t + 0.9 + rng() * 1.2 : t + 0.45 + rng() * 0.9
       }
       const hasLit = litS >= 0 && self.energy > 15
       const tw = target.weapons ?? []
