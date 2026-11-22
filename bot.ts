@@ -344,7 +344,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
     const fightable = squad
       ? engaged && !!target && tLos && opponents <= 1 && (hpFrac > (VAR === "bold" ? 0.25 : 0.4) || target.hp < self.hp * 1.1 || tDist < 25)
       : engaged && !!target && tLos && opponents <= 1 && (hpFrac > 0.5 || target.hp < self.hp * 0.6 || tDist < 30) && target.hp < self.hp * 1.5
-    const wantShoot = !!target && tLos && (engaged || weakTarget || tDist < 40 || (squad && tDist < 160 && hpFrac > 0.5 && opponents <= 1))
+    const wantShoot = !!target && tLos && (engaged || weakTarget || tDist < 40 || (squad && VAR !== "noprovoke" && tDist < 160 && hpFrac > 0.5 && opponents <= 1))
 
     // ---- movement mode ----
     let move: [number, number] = [0, 0]
