@@ -233,7 +233,10 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
   function pickUpgrade(offer: any): number {
     let bi = 0, bp = 1e9
     offer.choices.forEach((c: any, i: number) => {
-      const p = (V.has("dmgup") ? UPGRADE_DMG : UPGRADE_PRI).indexOf(c.id)
+      let L = V.has("dmgup") ? UPGRADE_DMG : UPGRADE_PRI
+      if (V.has("mobile")) L = ["plating", "armor", "servos", ...L.filter((u) => !["plating", "armor", "servos"].includes(u))]
+      if (V.has("sensors")) L = ["plating", "armor", "sensors", ...L.filter((u) => !["plating", "armor", "sensors"].includes(u))]
+      const p = L.indexOf(c.id)
       const pp = p < 0 ? 100 : p
       if (pp < bp) { bp = pp; bi = i }
     })
