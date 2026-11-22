@@ -408,7 +408,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
           if (dd < bd && Math.abs(c.pos[2] - z) < 4 && map.clearAt(c.pos[0], c.pos[1]) >= 2.4) { bd = dd; goal = [c.pos[0], c.pos[1]]; label = "cube" }
         }
       }
-      if (!goal && lootGoal && (quiet || d2(lootGoal, [x, y]) < 25)) { goal = lootGoal; label = "loot" }
+      if (!goal && lootGoal && (quiet || (squad && !engaged) || d2(lootGoal, [x, y]) < 25)) { goal = lootGoal; label = "loot" }
       if (goal && !inZoneSoon(zone, goal[0], goal[1], 10)) goal = null
       if (goal) {
         mode = "collect"
