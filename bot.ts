@@ -330,7 +330,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
     for (const e of visible) {
       const dd = d2(e.pos, [x, y])
       const los = map.los(x, y, mz, e.pos[0], e.pos[1], mechCenterZ(e), 1.5)
-      let s = -dd - (e.hp / e.maxhp) * 60 + (los ? 80 : 0) + (attackers.has(e.id) ? 60 : 0)
+      let s = -dd - (e.hp / e.maxhp) * 60 + (los ? 80 : 0) + (attackers.has(e.id) ? 60 : 0) - (VAR === "focus" ? e.hp * 0.12 : 0)
       if (dd > 230) s -= 200
       if (s > tScore) { tScore = s; target = e }
     }
@@ -342,7 +342,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
     if (obs.alive + myKills < 16 - 0.5 && t < 300) ffaSeen = true
     squad = !(VAR === "earlyhide" && laserS < 0 && t < 100) // aggressive dueling won in both settings (11.2 vs 10.7 pts over ~210 live FFA games each)
     const fightable = squad
-      ? engaged && !!target && tLos && opponents <= (VAR === "solo" ? 1 : 2) && (hpFrac > 0.4 || target.hp < self.hp * 1.1 || tDist < 25)
+      ? engaged && !!target && tLos && opponents <= 1 && (hpFrac > (VAR === "solo2" ? 0.55 : 0.4) || target.hp < self.hp * 1.1 || tDist < 25)
       : engaged && !!target && tLos && opponents <= 1 && (hpFrac > 0.5 || target.hp < self.hp * 0.6 || tDist < 30) && target.hp < self.hp * 1.5
     const wantShoot = !!target && tLos && (engaged || weakTarget || tDist < 40 || (squad && tDist < 160 && hpFrac > 0.5 && opponents <= 1))
 
