@@ -16,6 +16,13 @@ export class GameMap {
   solidHi: Float32Array
   blocked: Uint8Array // 1 = obstacle for ground navigation
   clear: Float32Array // distance (m) to nearest obstacle
+  canLo: Float32Array // canopy (tree crown) vertical interval per cell
+  canHi: Float32Array
+  // exposure grid (4 m): fraction of sight lines from eye height that reach 70 m
+  es = 4
+  enx = 0
+  eny = 0
+  expo: Float32Array = new Float32Array(0)
   // coarse nav grid
   cs = 2
   cnx: number
@@ -37,6 +44,29 @@ export class GameMap {
     this.solidHi = new Float32Array(N).fill(-1e9)
     this.blocked = new Uint8Array(N)
     for (const p of world.prisms) this.rasterPrism(p)
+    this.canLo = new Float32Array(N).fill(1e9)
+    this.canHi = new Float32Array(N).fill(-1e9)
+    const tf: string[] = world.trees?.fields ?? []
+    const td: number[] = world.trees?.data ?? []
+    const F = tf.length
+    if (F) {
+      const ix = tf.indexOf("crownX") >= 0 ? tf.indexOf("crownX") : tf.indexOf("x")
+      const iy = tf.indexOf("crownY") >= 0 ? tf.indexOf("crownY") : tf.indexOf("y")
+      const iz = tf.indexOf("z"), ih = tf.indexOf("height"), ir = tf.indexOf("crownR"), ib = tf.indexOf("crownBase")
+      for (let q = 0; q + F <= td.length; q += F) {
+        const cx = td[q + ix], cy = td[q + iy], z0 = td[q + iz], h = td[q + ih], r = td[q + ir], cb = td[q + ib]
+        const lo = z0 + cb, hi = z0 + h
+        for (let j = Math.floor(cy - r - this.minY); j <= Math.ceil(cy + r - this.minY); j++)
+          for (let i = Math.floor(cx - r - this.minX); i <= Math.ceil(cx + r - this.minX); i++) {
+            if (i < 0 || j < 0 || i >= this.nx || j >= this.ny) continue
+            const x = this.minX + i, y = this.minY + j
+            if ((x - cx) ** 2 + (y - cy) ** 2 > r * r) continue
+            const k = j * this.nx + i
+            if (lo < this.canLo[k]) this.canLo[k] = lo
+            if (hi > this.canHi[k]) this.canHi[k] = hi
+          }
+      }
+    }
     // steep terrain / ledges become obstacles
     const nx = this.nx, ny = this.ny
     for (let j = 1; j < ny - 1; j++)
@@ -65,6 +95,58 @@ export class GameMap {
         this.cwalk[k] = c >= 3.0 ? 1 : 0
         this.ccost[k] = c >= 6 ? 1 : 1 + (6 - c) * 0.5
       }
+    this.buildExposure()
+  }
+
+  /** Sight line (canopy attenuates: ~4 m of crown blocks). */
+  see(ax: number, ay: number, az: number, bx: number, by: number, bz: number): boolean {
+    const dx = bx - ax, dy = by - ay, dz = bz - az
+    const L = Math.hypot(dx, dy)
+    const n = Math.max(1, Math.ceil(L))
+    let can = 0
+    const stepL = L / n
+    for (let s = 1; s < n; s++) {
+      const f = s / n
+      const x = ax + dx * f, y = ay + dy * f, z = az + dz * f
+      const k = this.idx(x, y)
+      if (z < this.ground[k] - 0.3) return false
+      if (z >= this.solidLo[k] && z <= this.solidHi[k]) return false
+      if (z >= this.canLo[k] && z <= this.canHi[k]) { can += stepL; if (can > 4) return false }
+    }
+    return true
+  }
+
+  private buildExposure() {
+    const es = this.es
+    this.enx = Math.floor(this.nx / es)
+    this.eny = Math.floor(this.ny / es)
+    this.expo = new Float32Array(this.enx * this.eny).fill(1)
+    const R = 70, DIRS = 12
+    const cs = new Float32Array(DIRS), sn = new Float32Array(DIRS)
+    for (let d = 0; d < DIRS; d++) { cs[d] = Math.cos((d / DIRS) * Math.PI * 2); sn[d] = Math.sin((d / DIRS) * Math.PI * 2) }
+    for (let j = 0; j < this.eny; j++)
+      for (let i = 0; i < this.enx; i++) {
+        const k1 = (j * es) * this.nx + i * es
+        if (this.clear[k1] < 3) continue
+        const x = this.minX + i * es, y = this.minY + j * es, z = this.floor[k1] + 7
+        let tot = 0
+        for (let d = 0; d < DIRS; d++) {
+          let can = 0, r = 2
+          for (; r <= R; r += 2) {
+            const k = this.idx(x + cs[d] * r, y + sn[d] * r)
+            const zz = z + 0.0
+            if (zz < this.ground[k] || (zz >= this.solidLo[k] && zz <= this.solidHi[k])) break
+            if (zz >= this.canLo[k] && zz <= this.canHi[k]) { can += 2; if (can > 4) break }
+          }
+          tot += Math.min(r, R) / R
+        }
+        this.expo[j * this.enx + i] = tot / DIRS
+      }
+  }
+  expoAt(x: number, y: number): number {
+    const i = Math.round((x - this.minX) / this.es), j = Math.round((y - this.minY) / this.es)
+    if (i < 0 || j < 0 || i >= this.enx || j >= this.eny) return 1
+    return this.expo[j * this.enx + i]
   }
 
   private rasterPrism(p: any) {

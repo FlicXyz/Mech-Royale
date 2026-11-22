@@ -49,6 +49,10 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
   let lastMoveCmd: [number, number] = [0, 0]
   let dropFailed = new Set<number>()
   let takeFail = new Map<number, number>()
+  const attackers = new Map<number, number>()
+  let hideSpot: [number, number] | null = null
+  let hideT = -99
+  let npcAtkT = -99
 
   const zoneAt = (z: any, tt: number): { c: [number, number]; r: number } => {
     if (tt <= z.shrink_start) return { c: z.center, r: z.radius }
@@ -181,6 +185,25 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
     return best
   }
 
+  function chooseHide(x: number, y: number, nc: [number, number], safeR: number): [number, number] | null {
+    let best: [number, number] | null = null, bs = 1e9
+    const R = Math.min(120, safeR + 40)
+    for (let k = 0; k < 160; k++) {
+      const a = rng() * TAU, r = Math.sqrt(rng()) * R
+      const cx = x + Math.cos(a) * r, cy = y + Math.sin(a) * r
+      if (d2([cx, cy], nc) > safeR * 0.85) continue
+      if (map.clearAt(cx, cy) < 3.2) continue
+      const s = map.expoAt(cx, cy) * 100 + r * 0.25 + (d2([cx, cy], nc) / Math.max(safeR, 1)) * 15
+      if (s < bs) { bs = s; best = [cx, cy] }
+    }
+    if (!best) {
+      const r = Math.min(safeR * 0.4, d2([x, y], nc))
+      const a = Math.atan2(y - nc[1], x - nc[0])
+      best = [nc[0] + Math.cos(a) * r, nc[1] + Math.sin(a) * r]
+    }
+    return best
+  }
+
   function pickUpgrade(offer: any): number {
     let bi = 0, bp = 1e9
     offer.choices.forEach((c: any, i: number) => {
@@ -257,17 +280,42 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
     const enemies = [...tracks.values()].filter((tr) => t - tr.seen < 5)
     const visible = enemies.filter((e) => e.visible)
     const near = enemies.filter((e) => d2(e.pos, [x, y]) < 160)
-    // primary target: visible, LOS, score by distance and hp
     const mz = z + (self.stats?.muzzle_height ?? 7)
+    for (const e of obs.events) if (e.type === "damaged" && typeof e.by === "number" && e.by < 100) attackers.set(e.by, t)
+    for (const [id, tt] of attackers) if (t - tt > 4) attackers.delete(id)
+    // who can see / is aiming at me
+    const watchers: Track[] = []
+    for (const e of enemies) {
+      const dd = d2(e.pos, [x, y])
+      if (dd > 210) continue
+      const seesMe = attackers.has(e.id) || map.see(e.pos[0], e.pos[1], e.pos[2] + 8, x, y, z + 6)
+      if (!seesMe) continue
+      const bearing = Math.atan2(y - e.pos[1], x - e.pos[0])
+      const facing = Math.abs(wrap(e.aim[0] - bearing)) < (dd < 45 ? Math.PI : 1.05)
+      if (attackers.has(e.id) || facing) watchers.push(e)
+    }
+    const aimingAtMe = enemies.filter((e) => {
+      const dd = d2(e.pos, [x, y])
+      const bearing = Math.atan2(y - e.pos[1], x - e.pos[0])
+      return dd < 160 && Math.abs(wrap(e.aim[0] - bearing)) * dd < 8 && map.see(e.pos[0], e.pos[1], e.pos[2] + 8, x, y, z + 6)
+    })
+    const engaged = attackers.size > 0 || aimingAtMe.length > 0
+    // primary target: visible, LOS, prefer attackers, close, weak
     let target: Track | null = null
     let tScore = -1e9
     for (const e of visible) {
       const dd = d2(e.pos, [x, y])
       const los = map.los(x, y, mz, e.pos[0], e.pos[1], mechCenterZ(e), 1.5)
-      let s = -dd - (e.hp / e.maxhp) * 60 + (los ? 80 : 0)
+      let s = -dd - (e.hp / e.maxhp) * 60 + (los ? 80 : 0) + (attackers.has(e.id) ? 60 : 0)
       if (dd > 230) s -= 200
       if (s > tScore) { tScore = s; target = e }
     }
+    const tDist = target ? d2(target.pos, [x, y]) : 1e9
+    const tLos = target ? map.los(x, y, mz, target.pos[0], target.pos[1], mechCenterZ(target), 1.5) : false
+    const weakTarget = !!target && tLos && tDist < 140 && target.hp < Math.min(380, self.hp * 0.5) && hpFrac > 0.35
+    const opponents = watchers.length
+    const fightable = engaged && !!target && tLos && opponents <= 1 && hpFrac > 0.4 && target.hp < self.hp * 1.4
+    const wantShoot = !!target && tLos && (engaged || weakTarget || tDist < 40)
 
     // ---- movement mode ----
     let move: [number, number] = [0, 0]
@@ -282,91 +330,94 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
     const timeToShrink = zone.shrink_start - t
     const lateGame = nr <= 70
     const safeR = lateGame ? Math.max(4, nr * 0.45) : nr * 0.7
-    const needZone = distNext > safeR && (timeToShrink < (distNext - safeR) / 9 + 25 || t > zone.shrink_start || outside || nr < 150)
-
-    const danger = near.length
-    const recentlyHit = t - lastDamageT < 3
-    const strongest = Math.max(0, ...near.map((e) => e.hp))
-    const wantFlee = near.length > 0 && (hpFrac < 0.35 || (near.length >= 3 && hpFrac < 0.75) || (near.length >= 2 && hpFrac < 0.5) || (hpFrac < 0.5 && strongest > self.hp * 1.6))
+    // urgent only if we are (or will soon be) outside the shrinking circle
+    const edgeNow = zNow.r - d2([x, y], zNow.c)
+    const needZone = outside || !inZoneSoon(zone, x, y, 6 + Math.max(0, 25 - edgeNow) / 10, 3) || (lateGame && distNext > nr * 0.8)
+    const sneak = (m: [number, number], f = 0.4): [number, number] => {
+      const L = Math.hypot(m[0], m[1]) || 1
+      return [(m[0] / L) * f, (m[1] / L) * f]
+    }
 
     let label = ""
-    if (outside || (needZone && !(target && d2(target.pos, [x, y]) < 60 && !wantFlee))) {
+    if (outside || (needZone && !fightable)) {
       mode = "zone"
       const gx = nc[0] + (x - nc[0]) * (safeR * 0.6 / Math.max(distNext, 1e-3))
       const gy = nc[1] + (y - nc[1]) * (safeR * 0.6 / Math.max(distNext, 1e-3))
       planTo(x, y, gx, gy)
       move = followPath(x, y) ?? [gx - x, gy - y]
-      boost = outside || timeToShrink < 10 || self.energy > 70
-    } else if (wantFlee) {
-      mode = "flee"
-      if (!fleeTarget || t - fleeT > 1.2) { fleeTarget = findCover(self, near, zone); fleeT = t }
+      boost = outside || timeToShrink < 10 || self.energy > 70 || engaged
+      if (!outside && !engaged && timeToShrink > 30 && enemies.length === 0) { move = sneak(move, 0.95); boost = false }
+    } else if ((engaged && !fightable && !weakTarget) || (!engaged && watchers.length > 0 && !weakTarget)) {
+      // break line of sight
+      mode = engaged ? "evade" : "slip"
+      const threats = watchers.length ? watchers : near
+      if (!fleeTarget || t - fleeT > 1.0) { fleeTarget = findCover(self, threats, zone); fleeT = t }
       if (fleeTarget) {
-        planTo(x, y, fleeTarget[0], fleeTarget[1], t - pathT > 1.2)
+        planTo(x, y, fleeTarget[0], fleeTarget[1], t - pathT > 1.0)
         move = followPath(x, y) ?? [fleeTarget[0] - x, fleeTarget[1] - y]
         if (d2(fleeTarget, [x, y]) < 2.5) move = [0, 0]
       }
-      boost = self.energy > 15
-    } else if (target) {
+      const closest = Math.min(...threats.map((e) => d2(e.pos, [x, y])))
+      if (engaged || closest < 70) boost = self.energy > 12
+      else move = sneak(move, 0.42)
+    } else if (target && (fightable || weakTarget)) {
       mode = "fight"
-      const dd = d2(target.pos, [x, y])
+      const dd = tDist
       const ux = (target.pos[0] - x) / (dd || 1), uy = (target.pos[1] - y) / (dd || 1)
       if (t > strafeFlipT) { strafeDir = rng() < 0.5 ? -strafeDir : strafeDir; strafeFlipT = t + 0.45 + rng() * 0.9 }
       const hasLit = litS >= 0 && self.energy > 20
-      const prefMin = hasLit && target.hp < self.hp ? 15 : 45
-      const prefMax = hasLit && target.hp < self.hp ? 35 : 110
+      const prefMin = hasLit && target.hp < self.hp ? 15 : 40
+      const prefMax = hasLit && target.hp < self.hp ? 35 : weakTarget ? 70 : 110
       let radial = 0
       if (dd < prefMin) radial = -0.7
       else if (dd > prefMax) radial = 0.8
       move = [-uy * strafeDir + ux * radial, ux * strafeDir + uy * radial]
-      // don't strafe out of the zone
       if (!inZoneSoon(zone, x + move[0] * 6, y + move[1] * 6, 3)) { strafeDir = -strafeDir; move = [-uy * strafeDir + ux * radial, ux * strafeDir + uy * radial] }
-      // flip if blocked
       if (map.clearAt(x + move[0] * 4, y + move[1] * 4) < 2.7) { strafeDir = -strafeDir; strafeFlipT = t + 0.6; move = [-uy * strafeDir + ux * radial, ux * strafeDir + uy * radial] }
       boost = self.energy > 45 && !(laserS >= 0 && (W[laserS].charge ?? 0) > 0)
     } else {
-      // no visible target: drops, loot, cubes, crates, zone positioning, hide
+      // unseen: drops, loot, cubes, hide
       const quiet = enemies.length === 0 && t - lastDamageT > 4
       let goal: [number, number] | null = null
-      // supply drop
       for (const dr of obs.drops ?? []) {
         if (dr.lands_in > 0.5 || dropFailed.has(dr.id)) continue
         const dd = d2(dr.pos, [x, y])
-        if (dd < 140 && (quiet || hpFrac < 0.6) && inZoneSoon(zone, dr.pos[0], dr.pos[1], 15) && (dr.holder === null || dr.holder === me_id)) {
-          goal = [dr.pos[0], dr.pos[1]]
-          label = "drop"
-        }
+        if (dd < 120 && quiet && inZoneSoon(zone, dr.pos[0], dr.pos[1], 15) && (dr.holder === null || dr.holder === me_id)) { goal = [dr.pos[0], dr.pos[1]]; label = "drop" }
       }
-      // cubes
       if (!goal) {
-        let bd = 70
+        let bd = enemies.length ? 25 : 70
         for (const c of obs.cubes) {
           const dd = d2(c.pos, [x, y])
           if (dd < bd && Math.abs(c.pos[2] - z) < 4 && map.clearAt(c.pos[0], c.pos[1]) >= 2.4) { bd = dd; goal = [c.pos[0], c.pos[1]]; label = "cube" }
         }
       }
-      if (!goal && lootGoal && (quiet || d2(lootGoal, [x, y]) < 30)) { goal = lootGoal; label = "loot" }
+      if (!goal && lootGoal && (quiet || d2(lootGoal, [x, y]) < 25)) { goal = lootGoal; label = "loot" }
       if (goal && !inZoneSoon(zone, goal[0], goal[1], 10)) goal = null
       if (goal) {
         mode = "collect"
         planTo(x, y, goal[0], goal[1])
         move = followPath(x, y) ?? [goal[0] - x, goal[1] - y]
         if (d2(goal, [x, y]) < 1.5) move = [0, 0]
-        boost = self.energy > 60 && hpFrac > 0.5
-      } else if (distNext > safeR) {
-        mode = "drift"
-        const gx = nc[0] + (x - nc[0]) * (safeR * 0.6 / Math.max(distNext, 1e-3))
-        const gy = nc[1] + (y - nc[1]) * (safeR * 0.6 / Math.max(distNext, 1e-3))
-        planTo(x, y, gx, gy)
-        move = followPath(x, y) ?? [0, 0]
-        // walk slowly (silent) when not in a hurry
-        const L = Math.hypot(move[0], move[1])
-        if (L > 0 && timeToShrink > 40) { move = [move[0] * 0.95, move[1] * 0.95] }
+        boost = quiet && self.energy > 60 && d2(goal, [x, y]) > 20
+        if (!quiet) move = sneak(move, 0.42)
       } else {
-        mode = "hide"
-        move = [0, 0]
+        // pick / keep a hiding spot inside the safe area
+        const hs = hideSpot
+        const bad = !hs || d2(hs, nc) > safeR || t - hideT > 25
+        if (bad && t - hideT > 2) { hideSpot = chooseHide(x, y, nc, safeR); hideT = t }
+        if (hideSpot && d2(hideSpot, [x, y]) > 2.5) {
+          mode = "tohide"
+          planTo(x, y, hideSpot[0], hideSpot[1])
+          move = followPath(x, y) ?? [hideSpot[0] - x, hideSpot[1] - y]
+          const far = d2(hideSpot, [x, y]) > 60 && enemies.length === 0
+          move = far ? move : sneak(move, 0.42)
+          boost = false
+        } else {
+          mode = "hide"
+          move = [0, 0]
+        }
       }
     }
-
     // ---- dodge incoming fire ----
     let dodge: [number, number] | null = null
     for (const p of obs.projectiles) {
@@ -421,9 +472,11 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
     // ---- aiming and firing ----
     const fire: [boolean, boolean] = [false, false]
     let shootTarget: { pos: V3; vel: V3; cz: number; kind: string; r: number } | null = null
-    if (target) shootTarget = { pos: target.pos, vel: target.vel, cz: mechCenterZ(target), kind: "mech", r: cfg.mech.radius * (1 + cfg.cubes.size_per_cube * target.cubes) }
+    if (target && wantShoot) shootTarget = { pos: target.pos, vel: target.vel, cz: mechCenterZ(target), kind: "mech", r: cfg.mech.radius * (1 + cfg.cubes.size_per_cube * target.cubes) }
     // farm NPCs/crates when quiet
-    const quietFarm = !target && enemies.length === 0 && mode !== "flee" && mode !== "zone"
+    const npcAtk = obs.events.some((e: any) => e.type === "damaged" && typeof e.by === "number" && e.by >= 100)
+    if (npcAtk) npcAtkT = t
+    const quietFarm = !shootTarget && ((enemies.length === 0 && mode !== "evade" && mode !== "zone") || t - npcAtkT < 3)
     if (quietFarm) {
       let bd = 90
       for (const m of obs.mechs) {
@@ -431,7 +484,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
         const dd = d2(m.pos, [x, y])
         if (dd < bd && map.los(x, y, mz, m.pos[0], m.pos[1], m.pos[2] + 1.75, 1)) { bd = dd; shootTarget = { pos: m.pos, vel: m.vel, cz: m.pos[2] + cfg.npc.height / 2, kind: "npc", r: cfg.npc.radius } }
       }
-      if (!shootTarget)
+      if (!shootTarget && enemies.length === 0)
         for (const c of obs.crates) {
           const dd = d2(c.pos, [x, y])
           if (dd < bd && map.los(x, y, mz, c.pos[0], c.pos[1], c.pos[2] + 1.2, 1)) { bd = dd; shootTarget = { pos: c.pos, vel: [0, 0, 0], cz: c.pos[2] + cfg.crates.height / 2, kind: "crate", r: cfg.crates.radius } }
