@@ -28,7 +28,7 @@
       try { a = H.bot.act(o) } catch (err) { H.err = String(err && err.stack || err); a = {} }
       const c = H.cur
       if (c) {
-        c.maxMs = Math.max(c.maxMs, performance.now() - t0)
+        c.maxMs = Math.max(c.maxMs, performance.now() - t0); if (a.fire && a.fire[0]) c.gunShots = (c.gunShots || 0) + 1; for (const ev of o.events) if (ev.type === 'hit' && ev.weapon === 'gun') c.gunHits = (c.gunHits || 0) + 1
         const md = (a._dbg || '').split(' ')[0]; c.modes[md] = (c.modes[md] || 0) + 1
         for (const ev of o.events) {
           if (ev.type === 'damaged') { c.dmg += ev.amount; const k = ev.weapon + ':' + ev.by; c.dmgBy[k] = (c.dmgBy[k] || 0) + ev.amount }
@@ -47,7 +47,10 @@
       oe(e)
       if (H.cur && !H.cur.end) { H.cur.end = e; H.cur.dur = (Date.now() - H.cur.start) / 1000; H.logs.push(H.cur) }
     }
-    ch.onResults = (e) => { orr(e); if (H.logs.length) H.logs[H.logs.length - 1].results = e }
+    ch.onResults = (e) => {
+      orr(e); if (H.logs.length) H.logs[H.logs.length - 1].results = e
+      if (H.auto) setTimeout(() => { const b = [...document.querySelectorAll('button')].find(b => b.innerText.includes('START MATCH')); if (b) b.click() }, 4000)
+    }
   }
   return 'ok ' + (ch.m ? 'in-match' : 'idle')
 })()
