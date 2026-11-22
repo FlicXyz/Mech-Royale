@@ -376,16 +376,22 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
       const dd = tDist
       const ux = (target.pos[0] - x) / (dd || 1), uy = (target.pos[1] - y) / (dd || 1)
       if (t > strafeFlipT) { strafeDir = rng() < 0.5 ? -strafeDir : strafeDir; strafeFlipT = t + 0.45 + rng() * 0.9 }
-      const hasLit = litS >= 0 && self.energy > 20
-      const prefMin = hasLit && target.hp < self.hp ? 15 : 40
-      const prefMax = hasLit && target.hp < self.hp ? 35 : weakTarget ? 70 : 110
+      const hasLit = litS >= 0 && self.energy > 15
+      const tw = target.weapons ?? []
+      const enemyLit = tw.includes("lightning")
+      const enemyMort = tw.includes("mortar")
+      let prefMin = 40, prefMax = weakTarget ? 70 : 110
+      let kite = false
+      if (hasLit && !enemyMort && (!enemyLit || target.hp < self.hp)) { prefMin = 12; prefMax = 32 }
+      else if (enemyLit) { prefMin = 58; prefMax = 120; kite = dd < 58 }
       let radial = 0
-      if (dd < prefMin) radial = -0.7
+      if (dd < prefMin) radial = kite ? -1.6 : -0.7
       else if (dd > prefMax) radial = 0.8
       move = [-uy * strafeDir + ux * radial, ux * strafeDir + uy * radial]
       if (!inZoneSoon(zone, x + move[0] * 6, y + move[1] * 6, 3)) { strafeDir = -strafeDir; move = [-uy * strafeDir + ux * radial, ux * strafeDir + uy * radial] }
       if (map.clearAt(x + move[0] * 4, y + move[1] * 4) < 2.7) { strafeDir = -strafeDir; strafeFlipT = t + 0.6; move = [-uy * strafeDir + ux * radial, ux * strafeDir + uy * radial] }
-      boost = self.energy > 45 && !(laserS >= 0 && (W[laserS].charge ?? 0) > 0)
+      boost = (self.energy > 45 || (kite && self.energy > 8)) && !(laserS >= 0 && (W[laserS].charge ?? 0) > 0)
+      if (hasLit && prefMax < 40 && self.energy < 50 && dd < 40) boost = false
     } else {
       // unseen: drops, loot, cubes, hide
       const quiet = enemies.length === 0 && t - lastDamageT > 4
