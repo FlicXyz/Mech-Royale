@@ -57,6 +57,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
   const attackers = new Map<number, number>()
   let hideSpot: [number, number] | null = null
   let hideT = -99
+  const sounds: [number, number, number, number][] = []
   let healMode = false
   const crateMem = new Map<number, V3>()
   const pickMem = new Map<number, { id: number; kind: string; pos: number[] }>()
@@ -188,7 +189,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
         if (Math.abs(cz - self.pos[2]) > 6) continue
         let seen = 0
         for (const th of threats) if (visibleFrom(th.pos[0], th.pos[1], th.pos[2], cx, cy, cz)) seen++
-        let s = -seen * 100 - R * 0.6
+        let s = -seen * 100 - R * 0.6 - noiseAt(cx, cy) * 15
         // moving away from threats is good
         for (const th of threats) s += Math.min(60, d2(th.pos, [cx, cy]) - d2(th.pos, [x, y])) * 0.5
         if (!inZoneSoon(zone, cx, cy, 8, 2)) s -= 150
@@ -199,6 +200,16 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
     return best
   }
 
+  function noiseAt(px: number, py: number): number {
+    if (VAR !== "ears") return 0
+    let v = 0
+    for (const s of sounds) {
+      const dd = Math.hypot(px - s[1], py - s[2])
+      v += (s[3] * (1 - (t - s[0]) / 25)) / (1 + (dd / 45) ** 2)
+    }
+    return v
+  }
+
   function chooseHide(x: number, y: number, nc: [number, number], safeR: number): [number, number] | null {
     let best: [number, number] | null = null, bs = 1e9
     const R = Math.min(120, safeR + 40)
@@ -207,7 +218,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
       const cx = x + Math.cos(a) * r, cy = y + Math.sin(a) * r
       if (d2([cx, cy], nc) > safeR * 0.85) continue
       if (map.clearAt(cx, cy) < 3.2) continue
-      const s = map.expoAt(cx, cy) * 100 + (map.costAt(cx, cy) - 1) * 15 + r * 0.25 + (d2([cx, cy], nc) / Math.max(safeR, 1)) * 15
+      const s = map.expoAt(cx, cy) * 100 + (map.costAt(cx, cy) - 1) * 15 + r * 0.25 + noiseAt(cx, cy) * 12 + (d2([cx, cy], nc) / Math.max(safeR, 1)) * 15
       if (s < bs) { bs = s; best = [cx, cy] }
     }
     if (!best) {
@@ -266,6 +277,14 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
       else if (e.type === "kill") myKills++
       else if (e.type === "take_failed") takeFail.set(e.id, t)
     }
+    // sound danger map: estimated source points, decaying over 25 s
+    for (const s of obs.sounds) {
+      if (s.kind === "npc_gun" || s.kind === "drop" || s.bearing === null || s.bearing === undefined) continue
+      const r = s.dist === "near" ? 35 : s.dist === "mid" ? 110 : 230
+      const w = s.kind === "death" ? 0.5 : s.kind === "step" || s.kind === "boost" || s.kind === "jet" ? 1.5 : 1
+      sounds.push([t - (s.age ?? 0), x + Math.cos(s.bearing) * r, y + Math.sin(s.bearing) * r, w])
+    }
+    while (sounds.length && (t - sounds[0][0] > 25 || sounds.length > 200)) sounds.shift()
     for (const s of obs.sounds) {
       if ((["gun", "laser", "laser_charge", "lightning", "mortar"].includes(s.kind) && s.dist !== "far" || (["step", "boost", "jet", "reload"].includes(s.kind))) && t - alertT > 2) {
         if (!obs.mechs.some((m: any) => m.kind === "mech")) { alertYaw = s.bearing; alertT = t - 1 }
@@ -603,8 +622,11 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
       } else if (t - alertT < 4 && alertYaw !== null) {
         aim = [alertYaw, 0]
       } else if (mode === "hide") {
+        // ears: look toward the loudest recent area half the time, sweep otherwise
+        let best = -1, by = 0
+        if (VAR === "ears") for (const s of sounds) { const w = s[3] * (1 - (t - s[0]) / 25); if (w > best) { best = w; by = Math.atan2(s[2] - y, s[1] - x) } }
         scanYaw = wrap(scanYaw + 0.12)
-        aim = [scanYaw, 0]
+        aim = [best > 0.3 && Math.floor(t / 3) % 2 === 0 ? by : scanYaw, 0]
       } else if (Math.hypot(move[0], move[1]) > 0.2) {
         aim = [Math.atan2(move[1], move[0]), 0]
         scanYaw = aim[0]
