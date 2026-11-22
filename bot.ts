@@ -12,6 +12,7 @@ const d2 = (a: number[], b: number[]) => Math.hypot(a[0] - b[0], a[1] - b[1])
 const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v)
 
 const VAR: string = (globalThis as any).MR_VAR ?? ""
+const V = new Set(VAR.split("+"))
 const UPGRADE_PRI = [
   "plating", "armor", "nanites", "gun_damage", "laser_damage", "gun_rate", "laser_charge", "lightning_efficiency",
   "gun_mag", "servos", "sensors", "gun_velocity", "capacitor", "reactor", "jets", "gyros", "lightning_range",
@@ -201,7 +202,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
   }
 
   function noiseAt(px: number, py: number): number {
-    if (VAR !== "ears") return 0
+    if (!V.has("ears")) return 0
     let v = 0
     for (const s of sounds) {
       const dd = Math.hypot(px - s[1], py - s[2])
@@ -232,7 +233,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
   function pickUpgrade(offer: any): number {
     let bi = 0, bp = 1e9
     offer.choices.forEach((c: any, i: number) => {
-      const p = (VAR === "dmgup" ? UPGRADE_DMG : UPGRADE_PRI).indexOf(c.id)
+      const p = (V.has("dmgup") ? UPGRADE_DMG : UPGRADE_PRI).indexOf(c.id)
       const pp = p < 0 ? 100 : p
       if (pp < bp) { bp = pp; bi = i }
     })
@@ -349,7 +350,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
     for (const e of visible) {
       const dd = d2(e.pos, [x, y])
       const los = map.los(x, y, mz, e.pos[0], e.pos[1], mechCenterZ(e), 1.5)
-      let s = -dd - (e.hp / e.maxhp) * 60 + (los ? 80 : 0) + (attackers.has(e.id) ? 60 : 0) - (VAR === "focus" ? e.hp * 0.12 : 0)
+      let s = -dd - (e.hp / e.maxhp) * 60 + (los ? 80 : 0) + (attackers.has(e.id) ? 60 : 0) - (V.has("focus") ? e.hp * 0.12 : 0)
       if (dd > 230) s -= 200
       if (s > tScore) { tScore = s; target = e }
     }
@@ -359,11 +360,11 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
     const opponents = watchers.length
     // detect the practice setting: nobody dies unless we kill them
     if (obs.alive + myKills < 16 - 0.5 && t < 300) ffaSeen = true
-    squad = !(VAR === "earlyhide" && laserS < 0 && t < 100) // aggressive dueling won in both settings (11.2 vs 10.7 pts over ~210 live FFA games each)
+    squad = !(V.has("earlyhide") && laserS < 0 && t < 100) // aggressive dueling won in both settings (11.2 vs 10.7 pts over ~210 live FFA games each)
     const fightable = squad
-      ? engaged && !!target && tLos && opponents <= 1 && (hpFrac > (VAR === "bold" ? 0.25 : 0.4) || target.hp < self.hp * 1.1 || tDist < 25)
+      ? engaged && !!target && tLos && opponents <= 1 && (hpFrac > (V.has("bold") ? 0.25 : V.has("cautious") ? 0.55 : 0.4) || target.hp < self.hp * 1.1 || tDist < 25)
       : engaged && !!target && tLos && opponents <= 1 && (hpFrac > 0.5 || target.hp < self.hp * 0.6 || tDist < 30) && target.hp < self.hp * 1.5
-    const wantShoot = !!target && tLos && (engaged || weakTarget || tDist < 40 || (squad && VAR !== "noprovoke" && tDist < 160 && hpFrac > 0.5 && opponents <= 1))
+    const wantShoot = !!target && tLos && (engaged || weakTarget || tDist < 40 || (squad && !V.has("noprovoke") && tDist < 160 && hpFrac > 0.5 && opponents <= 1))
 
     // ---- movement mode ----
     let move: [number, number] = [0, 0]
@@ -414,18 +415,18 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
       const ux = (target.pos[0] - x) / (dd || 1), uy = (target.pos[1] - y) / (dd || 1)
       if (t > strafeFlipT) {
         strafeDir = rng() < 0.5 ? -strafeDir : strafeDir
-        if (VAR === "wall" && rng() < 0.7) {
+        if (V.has("wall") && rng() < 0.7) {
           // prefer the side that is more boxed in by buildings
           const e1 = map.expoAt(x - uy * 7, y + ux * 7), e2 = map.expoAt(x + uy * 7, y - ux * 7)
           strafeDir = e1 <= e2 ? 1 : -1
         }
-        strafeFlipT = VAR === "jitter" ? t + 0.2 + rng() * 0.45 : t + 0.45 + rng() * 0.9
+        strafeFlipT = V.has("jitter") ? t + 0.2 + rng() * 0.45 : t + 0.45 + rng() * 0.9
       }
       const hasLit = litS >= 0 && self.energy > 15
       const tw = target.weapons ?? []
       const enemyLit = tw.includes("lightning")
       const enemyMort = tw.includes("mortar")
-      let prefMin = VAR === "far" ? 75 : VAR === "near" ? 22 : 40, prefMax = VAR === "far" ? 150 : VAR === "near" ? 55 : weakTarget ? 70 : 110
+      let prefMin = V.has("far") ? 75 : V.has("near") ? 22 : 40, prefMax = V.has("far") ? 150 : V.has("near") ? 55 : weakTarget ? 70 : 110
       let kite = false
       if (hasLit && !enemyMort && (!enemyLit || target.hp < self.hp)) { prefMin = 12; prefMax = 32 }
       else if (enemyLit) { prefMin = 58; prefMax = 120; kite = dd < 58 }
@@ -435,13 +436,13 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
       move = [-uy * strafeDir + ux * radial, ux * strafeDir + uy * radial]
       if (!inZoneSoon(zone, x + move[0] * 6, y + move[1] * 6, 3)) { strafeDir = -strafeDir; move = [-uy * strafeDir + ux * radial, ux * strafeDir + uy * radial] }
       if (map.clearAt(x + move[0] * 4, y + move[1] * 4) < 2.7) { strafeDir = -strafeDir; strafeFlipT = t + 0.6; move = [-uy * strafeDir + ux * radial, ux * strafeDir + uy * radial] }
-      boost = (self.energy > (VAR === "jink" ? 15 : 45) || (kite && self.energy > 8)) && !(laserS >= 0 && (W[laserS].charge ?? 0) > 0)
+      boost = (self.energy > (V.has("jink") ? 15 : 45) || (kite && self.energy > 8)) && !(laserS >= 0 && (W[laserS].charge ?? 0) > 0)
       if (hasLit && prefMax < 40 && self.energy < 50 && dd < 40) boost = false
     } else {
       // unseen: drops, loot, cubes, hide
       const quiet = enemies.length === 0 && t - lastDamageT > 4
       let goal: [number, number] | null = null
-      const healing = VAR === "regen" && (hpFrac < 0.55 || (healMode && hpFrac < 0.92)) && !needZone
+      const healing = V.has("regen") && (hpFrac < 0.55 || (healMode && hpFrac < 0.92)) && !needZone
       healMode = healing
       for (const dr of obs.drops ?? []) {
         if (dr.lands_in > 0.5 || dropFailed.has(dr.id)) continue
@@ -632,7 +633,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
       } else if (mode === "hide") {
         // ears: look toward the loudest recent area half the time, sweep otherwise
         let best = -1, by = 0
-        if (VAR === "ears") for (const s of sounds) { const w = s[3] * (1 - (t - s[0]) / 25); if (w > best) { best = w; by = Math.atan2(s[2] - y, s[1] - x) } }
+        if (V.has("ears")) for (const s of sounds) { const w = s[3] * (1 - (t - s[0]) / 25); if (w > best) { best = w; by = Math.atan2(s[2] - y, s[1] - x) } }
         scanYaw = wrap(scanYaw + 0.12)
         aim = [best > 0.3 && Math.floor(t / 3) % 2 === 0 ? by : scanYaw, 0]
       } else if (Math.hypot(move[0], move[1]) > 0.2) {
