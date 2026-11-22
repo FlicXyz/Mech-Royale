@@ -398,7 +398,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
       const tw = target.weapons ?? []
       const enemyLit = tw.includes("lightning")
       const enemyMort = tw.includes("mortar")
-      let prefMin = 40, prefMax = weakTarget ? 70 : 110
+      let prefMin = VAR === "far" ? 75 : VAR === "near" ? 22 : 40, prefMax = VAR === "far" ? 150 : VAR === "near" ? 55 : weakTarget ? 70 : 110
       let kite = false
       if (hasLit && !enemyMort && (!enemyLit || target.hp < self.hp)) { prefMin = 12; prefMax = 32 }
       else if (enemyLit) { prefMin = 58; prefMax = 120; kite = dd < 58 }
