@@ -51,6 +51,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
   const attackers = new Map<number, number>()
   let hideSpot: [number, number] | null = null
   let hideT = -99
+  const crateMem = new Map<number, V3>()
   let myKills = 0
   let squad = false // practice: house bots team up and never fight each other
   let ffaSeen = false
@@ -237,6 +238,11 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
       tr.cubes = m.cubes ?? 0; tr.weapons = m.weapons ?? []; tr.charging = !!m.charging; tr.aim = m.aim; tr.visible = true
     }
     for (const [id, tr] of tracks) if (t - tr.seen > 20) tracks.delete(id)
+    for (const c of obs.crates) crateMem.set(c.id, [c.pos[0], c.pos[1], c.pos[2]])
+    for (const [id, cp] of crateMem) {
+      // forget crates we should see but don't (destroyed)
+      if (d2(cp, [x, y]) < 40 && !obs.crates.some((c: any) => c.id === id) && map.see(x, y, z + 8, cp[0], cp[1], cp[2] + 1.5)) crateMem.delete(id)
+    }
 
     for (const e of obs.events) {
       if (e.type === "damaged") {
@@ -409,6 +415,15 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
         }
       }
       if (!goal && lootGoal && (quiet || (squad && !engaged) || d2(lootGoal, [x, y]) < 25)) { goal = lootGoal; label = "loot" }
+      if (!goal && squad && !engaged && t < 330 && hpFrac > 0.6) {
+        // farm crates: walk until within shooting distance with line of sight
+        let bd = 160
+        for (const [, cp] of crateMem) {
+          const dd = d2(cp, [x, y])
+          if (dd < bd && Math.abs(cp[2] - z) < 6 && inZoneSoon(zone, cp[0], cp[1], 20)) { bd = dd; goal = [cp[0], cp[1]]; label = "crate" }
+        }
+        if (goal && bd < 30 && map.los(x, y, mz, goal[0], goal[1], map.groundAt(goal[0], goal[1]) + 1.2, 1)) goal = [x, y]
+      }
       if (goal && !inZoneSoon(zone, goal[0], goal[1], 10)) goal = null
       if (goal) {
         mode = "collect"
@@ -504,7 +519,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
     // farm NPCs/crates when quiet
     const npcAtk = obs.events.some((e: any) => e.type === "damaged" && typeof e.by === "number" && e.by >= 100)
     if (npcAtk) npcAtkT = t
-    const quietFarm = !shootTarget && ((enemies.length === 0 && mode !== "evade" && mode !== "zone") || t - npcAtkT < 3)
+    const quietFarm = !shootTarget && ((enemies.length === 0 && mode !== "evade" && mode !== "zone") || t - npcAtkT < 3 || (squad && !engaged && mode !== "evade"))
     if (quietFarm) {
       let bd = 90
       for (const m of obs.mechs) {
@@ -512,7 +527,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
         const dd = d2(m.pos, [x, y])
         if (dd < bd && map.los(x, y, mz, m.pos[0], m.pos[1], m.pos[2] + 1.75, 1)) { bd = dd; shootTarget = { pos: m.pos, vel: m.vel, cz: m.pos[2] + cfg.npc.height / 2, kind: "npc", r: cfg.npc.radius } }
       }
-      if (!shootTarget && enemies.length === 0)
+      if (!shootTarget && (enemies.length === 0 || squad))
         for (const c of obs.crates) {
           const dd = d2(c.pos, [x, y])
           if (dd < bd && map.los(x, y, mz, c.pos[0], c.pos[1], c.pos[2] + 1.2, 1)) { bd = dd; shootTarget = { pos: c.pos, vel: [0, 0, 0], cz: c.pos[2] + cfg.crates.height / 2, kind: "crate", r: cfg.crates.radius } }
