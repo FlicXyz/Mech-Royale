@@ -420,7 +420,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
           const e1 = map.expoAt(x - uy * 7, y + ux * 7), e2 = map.expoAt(x + uy * 7, y - ux * 7)
           strafeDir = e1 <= e2 ? 1 : -1
         }
-        strafeFlipT = V.has("jitter") ? t + 0.2 + rng() * 0.45 : t + 0.45 + rng() * 0.9
+        strafeFlipT = V.has("jitter") ? t + 0.2 + rng() * 0.45 : V.has("steady") ? t + 0.9 + rng() * 1.2 : t + 0.45 + rng() * 0.9
       }
       const hasLit = litS >= 0 && self.energy > 15
       const tw = target.weapons ?? []
@@ -436,7 +436,7 @@ export function makeBot(hello: any, map: GameMap, rng: () => number = Math.rando
       move = [-uy * strafeDir + ux * radial, ux * strafeDir + uy * radial]
       if (!inZoneSoon(zone, x + move[0] * 6, y + move[1] * 6, 3)) { strafeDir = -strafeDir; move = [-uy * strafeDir + ux * radial, ux * strafeDir + uy * radial] }
       if (map.clearAt(x + move[0] * 4, y + move[1] * 4) < 2.7) { strafeDir = -strafeDir; strafeFlipT = t + 0.6; move = [-uy * strafeDir + ux * radial, ux * strafeDir + uy * radial] }
-      boost = (self.energy > (V.has("jink") ? 15 : 45) || (kite && self.energy > 8)) && !(laserS >= 0 && (W[laserS].charge ?? 0) > 0)
+      boost = (self.energy > (V.has("jink") ? 15 : V.has("saveboost") ? 70 : 45) || (kite && self.energy > 8)) && !(laserS >= 0 && (W[laserS].charge ?? 0) > 0)
       if (hasLit && prefMax < 40 && self.energy < 50 && dd < 40) boost = false
     } else {
       // unseen: drops, loot, cubes, hide
